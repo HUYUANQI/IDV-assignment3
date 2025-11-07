@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>D3.js — 5 Interactive Charts</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#0f172a; --ink:#e5e7eb; --muted:#94a3b8; --accent:#22d3ee; --grid:#1f2937;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+  header{max-width:1200px;margin:24px auto 8px;padding:0 20px}
+  h1{font-size:28px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  main{max-width:1200px;margin:0 auto 80px;padding:0 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:18px}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.02));border:1px solid #1e293b;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.25);overflow:hidden;position:relative}
+  .card header{padding:14px 16px 0}
+  .card h2{font-size:18px;margin:0 0 4px}
+  .card .subtitle{color:var(--muted);font-size:12px;margin:0 0 10px}
+  .viz{padding:8px 12px 12px}
+  svg{width:100%;height:auto;display:block;background:#0b1017;border-radius:12px;border:1px solid #1f2937}
+  .pipeline{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px 12px;border-top:1px dashed #203047;background:linear-gradient(180deg,rgba(34,211,238,0.06),rgba(34,211,238,0.02))}
+  .step{display:flex;align-items:flex-start;gap:8px;background:#0a1220;border:1px solid #1f2b3a;border-radius:12px;padding:8px 10px;min-width:120px;flex:1}
+  .badge{width:22px;height:22px;border-radius:999px;display:grid;place-items:center;background:#0b1624;border:1px solid #1f3047;font-weight:700;font-size:12px;color:var(--accent)}
+  .step .label{font-size:12px;font-weight:700;margin-bottom:2px}
+  .step .desc{font-size:11px;color:var(--muted);line-height:1.25}
+  .grid-line{stroke:var(--grid);stroke-width:0.8;shape-rendering:crispEdges}
+  .axis text{fill:#cbd5e1;font-size:10px}
+  .axis path,.axis line{stroke:#334155}
+  .tooltip{position:fixed; pointer-events:none; z-index:9999;
+    background:#0a1220; color:#e5e7eb; border:1px solid #1f2b3a; border-radius:10px;
+    padding:8px 10px; font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,.4);
+    opacity:0; transform:translateY(-6px); transition:opacity .12s ease, transform .12s ease;}
+  .tooltip.show{opacity:1; transform:translateY(0)}
+  .hint{color:#a3b2c5;font-size:12px;margin:6px 12px 0}
+  .handle{cursor:move}
+  .xhandle{cursor:ew-resize}
+  .vertex{cursor:grab}
+  .curv{cursor:ns-resize}
+  .chipbar{display:flex; gap:8px; flex-wrap:wrap; padding:0 12px 8px}
+  .chip{user-select:none; border:1px solid #243244; background:#0b1624; color:#cfe0ff; border-radius:999px; padding:5px 9px; font-size:12px; cursor:pointer}
+  .chip.on{background:#183049; border-color:#265170}
+  .eq{color:#cbd5e1;font-size:12px;margin:4px 12px 0}
+</style>
+</head>
+<body>
+  <header>
+    <h1>D3.js — 5 Interactive Charts</h1>
+    <p class="sub">All charts show the formation logic: <b>Data → Transform → Encode → Render</b>.</p>
+  </header>
+  <main id="grid"></main>
+  <div id="tt" class="tooltip" role="status" aria-live="polite"></div>
+
+<script>
+// ---------- Helpers ----------
+const grid = d3.select("#grid");
+const tt = d3.select("#tt");
+const clamp = (v, mn, mx) => Math.max(mn, Math.min(mx, v));
+
+function showTT(html, x, y){ tt.html(html).style("left",(x+12)+"px").style("top",(y+12)+"px").classed("show",true); }
+function hideTT(){ tt.classed("show", false); }
+
+function card(id, title, subtitle){
+  const c = grid.append("section").attr("class","card").attr("id", id);
+  const h = c.append("header");
+  h.append("h2").text(title);
+  h.append("p").attr("class","subtitle").text(subtitle);
+  c.append("div").attr("class","viz");
+  c.append("div").attr("class","pipeline");
+  return c;
+}
+function pipeline(sel, steps){
+  const p = sel.select(".pipeline");
+  const names = ["Data","Transform","Encode","Render"];
+  p.selectAll(".step").data(steps).enter()
+    .append("div").attr("class","step").each(function(d,i){
+      const s = d3.select(this);
+      s.append("div").attr("class","badge").text(i+1);
+      const box = s.append("div");
+      box.append("div").attr("class","label").text(names[i]);
+      box.append("div").attr("class","desc").text(d);
+    });
+}
+function makeSVG(container, w=520, h=340, margin={top:24,right:24,bottom:36,left:48}){
+  const svg = container.select(".viz").append("svg").attr("viewBox", `0 0 ${w} ${h}`);
+  const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+  const innerW = w - margin.left - margin.right;
+  const innerH = h - margin.top - margin.bottom;
+  return {svg,g,w,h,innerW,innerH,margin};
+}
+function addGrid(g, innerW, innerH, xScale, yScale){
+  g.append("g").selectAll("line").data(yScale.ticks(10)).enter().append("line")
+   .attr("class","grid-line").attr("x1",0).attr("x2",innerW).attr("y1",d=>yScale(d)).attr("y2",d=>yScale(d));
+  g.append("g").selectAll("line").data(xScale.ticks(10)).enter().append("line")
+   .attr("class","grid-line").attr("y1",0).attr("y2",innerH)
+   .attr("x1",d=>xScale(d)).attr("x2",d=>xScale(d));
+}
+
+// ===================================================
+// Chart 1 — Word Network (Force-directed, NO TEXT LABELS)
+// ===================================================
+(function(){
+  const c = card("chart1","Chart 1 · Word Network (Force-directed)","Drag nodes; hover to see degree and group. (labels removed)");
+  const {g,innerW,innerH} = makeSVG(c, 560, 350);
+
+  const words = ["design","user","flow","chair","temple","budget","safety","sensor","AR","tennis","vision","map"];
+  const nodes = words.map((w,i)=>({id:w, group:i%3}));
+  const links = d3.range(24).map(()=>{
+    const s = nodes[Math.floor(Math.random()*nodes.length)].id;
+    let t = nodes[Math.floor(Math.random()*nodes.length)].id;
+    if(t===s) t = nodes[(Math.floor(Math.random()*nodes.length)+1)%nodes.length].id;
+    return {source:s, target:t, value: 1+Math.random()*3};
+  });
+
+  const color = d3.scaleOrdinal().domain([0,1,2]).range(["#60a5fa","#34d399","#f472b6"]);
+  const link = g.append("g").attr("stroke","#334155").attr("stroke-opacity",0.9)
+                .selectAll("line").data(links).enter().append("line")
+                .attr("stroke-width", d=>Math.sqrt(d.value));
+  const node = g.append("g").selectAll("g").data(nodes).enter().append("g").call(drag(simulation()));
+  node.append("circle").attr("r", 8).attr("fill", d=>color(d.group)).attr("stroke","#0b0f14").attr("stroke-width",0.8);
+
+  node.on("mousemove", (event,d)=>{
+    const deg = links.filter(l=>l.source.id===d.id || l.target.id===d.id).length;
+    showTT(`<b>group=${d.group}</b><br/>degree=${deg}`, event.clientX, event.clientY);
+  }).on("mouseleave", hideTT)
+    .on("mouseenter", function(){ d3.select(this).select("circle").transition().duration(150).attr("r",11); })
+    .on("mouseleave", function(){ d3.select(this).select("circle").transition().duration(150).attr("r",8); });
+
+  function simulation(){
+    const sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d=>d.id).distance(60).strength(0.7))
+      .force("charge", d3.forceManyBody().strength(-130))
+      .force("center", d3.forceCenter(innerW/2, innerH/2))
+      .on("tick", ticked);
+    return sim;
+  }
+  function ticked(){
+    link.attr("x1", d=>d.source.x).attr("y1", d=>d.source.y).attr("x2", d=>d.target.x).attr("y2", d=>d.target.y);
+    node.attr("transform", d=>`translate(${d.x},${d.y})`);
+  }
+  function drag(sim){
+    function dragstarted(event) {
+      if (!event.active) sim.alphaTarget(0.3).restart();
+      event.subject.fx = event.subject.x; event.subject.fy = event.subject.y;
+    }
+    function dragged(event) { event.subject.fx = event.x; event.subject.fy = event.y; }
+    function dragended(event) { if (!event.active) sim.alphaTarget(0); event.subject.fx = null; event.subject.fy = null; }
+    return d3.drag().on("start", dragstarted).on("drag", dragged).on("end", dragended);
+  }
+
+  pipeline(c, [
+    "Nodes (12) + links (24) from co-occurrence",
+    "Force layout: link distance/strength, charge, centering",
+    "Group → color; weight → stroke width; drag nodes",
+    "Render links + circles (labels removed)"
+  ]);
+})();
+
+// ===================================================
+// Chart 2 — Greedy Route (Nearest-Neighbor)
+// ===================================================
+(function(){
+  const c = card("chart2","Chart 2 · Greedy Route (Nearest-Neighbor)","Hover to replay; click a point to highlight the prefix path.");
+  const {g,svg,innerW,innerH} = makeSVG(c, 560, 350);
+
+  const pts = d3.range(14).map(i=>({id:i, x:Math.random()*innerW, y:Math.random()*innerH}));
+
+  const unvisited = new Set(pts.map(p=>p.id));
+  const path = [];
+  let current = pts[0];
+  unvisited.delete(current.id);
+  path.push(current);
+  while(unvisited.size){
+    let best = null, bestD = Infinity;
+    for(const id of unvisited){
+      const p = pts.find(q=>q.id===id);
+      const d = (p.x-current.x)**2 + (p.y-current.y)**2;
+      if(d<bestD){bestD=d;best=p;}
+    }
+    current = best; unvisited.delete(best.id); path.push(best);
+  }
+
+  const gx = d3.range(0, innerW, 40), gy = d3.range(0, innerH, 40);
+  g.append("g").selectAll("line").data(gx).enter().append("line")
+    .attr("class","grid-line").attr("x1",d=>d).attr("x2",d=>d).attr("y1",0).attr("y2",innerH);
+  g.append("g").selectAll("line").data(gy).enter().append("line")
+    .attr("class","grid-line").attr("y1",d=>d).attr("y2",d=>d).attr("x1",0).attr("x2",innerW);
+
+  svg.append("defs").append("marker")
+    .attr("id","arrow").attr("viewBox","0 0 10 10").attr("refX",10).attr("refY",5).attr("markerWidth",6).attr("markerHeight",6).attr("orient","auto-start-reverse")
+    .append("path").attr("d","M 0 0 L 10 5 L 0 10 z").attr("fill","#22d3ee");
+
+  const line = d3.line().x(d=>d.x+48).y(d=>d.y+24).curve(d3.curveCatmullRom.alpha(0.5));
+  const pathSel = g.append("path")
+    .attr("d", line(path))
+    .attr("fill","none").attr("stroke","#22d3ee").attr("stroke-width",2)
+    .attr("marker-end","url(#arrow)")
+    .attr("stroke-dasharray", function(){ return this.getTotalLength(); })
+    .attr("stroke-dashoffset", function(){ return this.getTotalLength(); });
+
+  const totalLen = pathSel.node().getTotalLength();
+  c.select(".viz").on("mouseenter", ()=>{
+    pathSel.interrupt().attr("stroke-dasharray", totalLen).attr("stroke-dashoffset", totalLen)
+      .transition().duration(1400).ease(d3.easeCubicOut).attr("stroke-dashoffset", 0);
+  });
+
+  const high = g.append("path").attr("fill","none").attr("stroke","#fbbf24").attr("stroke-width",3).attr("opacity",0.9);
+  g.selectAll("circle.pt").data(pts).enter().append("circle")
+    .attr("class","pt").attr("cx",d=>d.x).attr("cy",d=>d.y).attr("r",5).attr("fill","#34d399").attr("stroke","#0b0f14")
+    .on("click", (event,d)=>{
+      const idx = path.findIndex(p=>p.id===d.id);
+      const partial = line(path.slice(0, idx+1));
+      high.attr("d", partial);
+    });
+
+  g.selectAll("text.stepno").data(path).enter().append("text")
+    .attr("class","stepno").attr("x",d=>d.x+8).attr("y",d=>d.y-8)
+    .attr("fill","#94a3b8").attr("font-size",11).text((d,i)=>i+1);
+
+  pipeline(c, [
+    "Planar points: id,x,y × 14",
+    "Nearest-neighbor heuristic builds a visiting order",
+    "Order → polyline path; click a point to show prefix path",
+    "Hover to replay stroke animation"
+  ]);
+})();
+
+// ===================================================
+// Chart 3 — Venn (Mouse-driven)
+// ===================================================
+(function(){
+  const c = card("chart3","Chart 3 · Venn (Mouse-driven)","Move mouse to highlight combinations; click to lock/unlock; drag circles to reposition overlaps.");
+  c.insert("p", ".viz").attr("class","hint").text("Move inside circles to change highlight · Click to lock/unlock · Drag pale circles to change overlaps.");
+
+  const {g,svg,innerW,innerH} = makeSVG(c, 560, 350);
+  const state = {
+    A:{id:"A", cx:innerW/2-70, cy:innerH/2, r:95},
+    B:{id:"B", cx:innerW/2+70, cy:innerH/2, r:95},
+    C:{id:"C", cx:innerW/2,    cy:innerH/2-70, r:95}
+  };
+  const ids = ["A","B","C"];
+  const defs = svg.append("defs");
+  ids.forEach(k=>{
+    defs.append("circle").attr("id","circ"+k).attr("cx",state[k].cx).attr("cy",state[k].cy).attr("r",state[k].r);
+    defs.append("clipPath").attr("id","clip"+k).append("use").attr("href","#circ"+k);
+  });
+
+  const layer = g.append("g");
+  const under = layer.selectAll("use.under").data(ids.map(k=>state[k])).enter().append("use")
+    .attr("class","under handle").attr("href",d=>"#circ"+d.id)
+    .attr("fill","#64748b").attr("fill-opacity",0.12).attr("stroke","#475569").attr("stroke-width",1.1);
+
+  const labels = g.selectAll("text.lbl").data(ids.map(k=>state[k])).enter().append("text")
+    .attr("class","lbl").attr("x",d=>d.cx).attr("y",d=>d.cy - d.r - 10)
+    .attr("text-anchor","middle").attr("fill","#cbd5e1").text(d=>d.id);
+
+  const regions = {
+    "A": layer.append("use").attr("href","#circA"),
+    "B": layer.append("use").attr("href","#circB"),
+    "C": layer.append("use").attr("href","#circC"),
+    "AB": layer.append("use").attr("href","#circA").attr("clip-path","url(#clipB)"),
+    "AC": layer.append("use").attr("href","#circA").attr("clip-path","url(#clipC)"),
+    "BC": layer.append("use").attr("href","#circB").attr("clip-path","url(#clipC)"),
+    "ABC": layer.append("g").attr("clip-path","url(#clipB)")
+                     .append("use").attr("href","#circA").attr("clip-path","url(#clipC)")
+  };
+  Object.values(regions).forEach(sel=> sel.attr("opacity",0).attr("stroke","#0b0f14").attr("stroke-width",0.8));
+
+  let locked = false;
+  let current = "A";
+
+  function comboAt(x,y){
+    const inA = (x-state.A.cx)**2 + (y-state.A.cy)**2 <= state.A.r**2;
+    const inB = (x-state.B.cx)**2 + (y-state.B.cy)**2 <= state.B.r**2;
+    const inC = (x-state.C.cx)**2 + (y-state.C.cy)**2 <= state.C.r**2;
+    let s = ""; if(inA) s+="A"; if(inB) s+="B"; if(inC) s+="C";
+    return s || null;
+  }
+  function colorFor(x,y,key){
+    const base = (x/innerW)*300 + (y/innerH)*60;
+    const shift = {A:0,B:20,C:-20,AB:40,AC:70,BC:100,ABC:140}[key] || 0;
+    const hue = (base + shift) % 360;
+    return `hsl(${hue}, 80%, 55%)`;
+  }
+  function highlight(k, x, y){
+    d3.selectAll(Object.values(regions).map(n=>n.node())).interrupt().transition().duration(80).attr("opacity",0);
+    if(!k) return;
+    const fill = colorFor(x,y,k);
+    regions[k].transition().duration(80).attr("fill", fill).attr("opacity",0.85);
+    under.transition().duration(80)
+      .attr("fill-opacity", d => (k.includes(d.id) ? 0.22 : 0.12))
+      .attr("fill", d => (k.includes(d.id) ? fill : "#64748b"));
+  }
+
+  c.select(".viz").on("mousemove", (event)=>{
+    if(locked) return;
+    const [mx,my] = d3.pointer(event, g.node());
+    const k = comboAt(mx,my);
+    current = k || current;
+    highlight(k, mx, my);
+  }).on("mouseleave", ()=>{ if(!locked) highlight(null,0,0); })
+    .on("click", (event)=>{
+      const [mx,my] = d3.pointer(event, g.node());
+      const k = comboAt(mx,my);
+      if(k){ current = k; }
+      locked = !locked;
+      highlight(current, mx, my);
+    });
+
+  under.call(d3.drag().on("drag", (event,d)=>{
+    const [mx,my] = d3.pointer(event, g.node());
+    state[d.id].cx = mx; state[d.id].cy = my;
+    d3.select("#circ"+d.id).attr("cx",mx).attr("cy",my);
+    labels.filter(x=>x.id===d.id).attr("x",mx).attr("y",my - state[d.id].r - 10);
+  }));
+
+  pipeline(c, [
+    "Circle definitions A,B,C (cx,cy,r) stored in <defs>",
+    "Mouse position → membership test → combination (A/B/C/AB/AC/BC/ABC)",
+    "Combination maps to region via clipPaths; color follows mouse",
+    "Click to lock/unlock; drag circles to reposition overlaps"
+  ]);
+})();
+
+// ===================================================
+// Chart 4 — Sketchy SVG (Re-ink on hover)
+// ===================================================
+(function(){
+  const c = card("chart4","Chart 4 · Sketchy SVG","Hover to re-jitter and redraw — mimics a 're-inking' effect.");
+  const {g,svg,innerW,innerH} = makeSVG(c, 560, 350);
+
+  const defs = svg.append("defs");
+  const flt = defs.append("filter").attr("id","rough").attr("x","-10%").attr("y","-10%").attr("width","120%").attr("height","120%");
+  flt.append("feTurbulence").attr("type","fractalNoise").attr("baseFrequency","0.8").attr("numOctaves","1").attr("result","noise");
+  flt.append("feDisplacementMap").attr("in","SourceGraphic").attr("in2","noise").attr("scale","1");
+
+  const base = [
+    [60,160],[120,140],[180,145],[240,150],[300,152],[360,148],[420,142],[480,160],
+    [480,200],[420,220],[360,210],[300,205],[240,207],[180,212],[120,215],[60,200],[60,160]
+  ];
+  const jitter = (v)=> v + d3.randomNormal(0,2)();
+  const line = d3.line().curve(d3.curveBasis);
+  let path = g.append("path").attr("fill","none").attr("stroke","#eab308").attr("stroke-width",2)
+    .attr("filter","url(#rough)");
+
+  function redraw(){
+    const pts = base.map(([x,y])=>[jitter(x), jitter(y)]);
+    path.attr("d", line(pts))
+      .attr("stroke-dasharray","2000").attr("stroke-dashoffset",2000)
+      .transition().duration(800).attr("stroke-dashoffset",0);
+  }
+  redraw();
+  c.select(".viz").on("mouseenter", redraw);
+
+  pipeline(c, [
+    "Key anchor points (sampled)",
+    "Random jitter on hover for sketchy feel",
+    "Point sequence → path (curveBasis) + rough filter",
+    "Animate stroke to mimic re-inking"
+  ]);
+})();
+
+// ===================================================
+// Chart 5 — Parabola with FULL mouse logic
+// ===================================================
+(function(){
+  const c = card("chart5","Chart 5 · Parabola y = a(x − h)^2 + k","Click chips to toggle helpers · Click to lock tracer · Shift+drag green handle to scale curvature without flipping · Double-click to reset.");
+  const chipbar = c.insert("div", ".viz").attr("class","chipbar");
+  const chips = {
+    tn: chipbar.append("div").attr("class","chip").text("Tangent & Normal"),
+    axis: chipbar.append("div").attr("class","chip").text("Axis x = h"),
+    area: chipbar.append("div").attr("class","chip").text("Area: y = 0"),
+    lock: chipbar.append("div").attr("class","chip").text("Lock Tracer: OFF")
+  };
+  const info = c.insert("div", ".viz").attr("class","eq").text("");
+
+  const {g,svg,innerW,innerH} = makeSVG(c, 560, 350);
+  const x = d3.scaleLinear().domain([-2,5]).range([0,innerW]);
+  const y = d3.scaleLinear().domain([-2,5]).range([innerH,0]);
+  addGrid(g, innerW, innerH, x, y);
+  g.append("g").attr("transform",`translate(0,${innerH})`).call(d3.axisBottom(x));
+  g.append("g").call(d3.axisLeft(y));
+
+  // State
+  const state = { a:0.35, h:1.0, k:0.5, xL:0.6, xR:2.2 };
+  const second = { p1:{x:-0.6,y:0.8}, p2:{x:3.6,y:1.8} };
+  let tracerLocked = false;
+  let curvX = state.h + 1.2;
+
+  const f = xv => state.a*(xv-state.h)*(xv-state.h)+state.k;
+  function mLine(){ return (second.p2.y-second.p1.y)/(second.p2.x-second.p1.x); }
+  function bLine(){ const m=mLine(); return second.p1.y - m*second.p1.x; }
+  const gLine = xv => mLine()*xv + bLine();
+
+  // Elements
+  const curve = g.append("path").attr("fill","none").attr("stroke","#a78bfa").attr("stroke-width",2);
+  const tracer = g.append("circle").attr("r",4.5).attr("fill","#fbbf24").attr("stroke","#0b0f14");
+
+  const shade = g.append("path").attr("fill","#94a3b8").attr("opacity",0.35).attr("stroke","#475569").attr("stroke-dasharray","3 3");
+  const vL = g.append("line").attr("class","xhandle").attr("stroke","#cbd5e1").attr("stroke-dasharray","6 4").attr("stroke-width",1.5);
+  const vR = g.append("line").attr("class","xhandle").attr("stroke","#cbd5e1").attr("stroke-dasharray","6 4").attr("stroke-width",1.5);
+
+  const vertex = g.append("circle").attr("class","vertex").attr("r",6).attr("fill","#22d3ee").attr("stroke","#0b0f14");
+  const curv = g.append("circle").attr("class","curv").attr("r",6).attr("fill","#34d399").attr("stroke","#0b0f14");
+
+  const axis = g.append("line").attr("stroke","#7dd3fc").attr("stroke-dasharray","4 3").attr("opacity",0);
+  const vLabel = g.append("text").attr("fill","#7dd3fc").attr("font-size",11).attr("opacity",0);
+
+  const line2 = g.append("line").attr("stroke","#60a5fa").attr("stroke-width",2).attr("opacity",0);
+  const h1 = g.append("circle").attr("r",5.5).attr("fill","#1d4ed8").attr("stroke","#0b0f14").attr("opacity",0).style("cursor","move");
+  const h2 = g.append("circle").attr("r",5.5).attr("fill","#1d4ed8").attr("stroke","#0b0f14").attr("opacity",0).style("cursor","move");
+
+  const tLine = g.append("line").attr("stroke","#f97316").attr("stroke-width",2).attr("opacity",0);
+  const nLine = g.append("line").attr("stroke","#22c55e").attr("stroke-width",2).attr("opacity",0);
+
+  function draw(){
+    const samples = d3.range(0, innerW+1, 2).map(px=>[px, y(f(x.invert(px)))]);
+    curve.attr("d", d3.line()(samples));
+
+    vertex.attr("cx", x(state.h)).attr("cy", y(state.k));
+    curv.attr("cx", x(curvX)).attr("cy", y(f(curvX)));
+
+    axis.attr("x1", x(state.h)).attr("x2", x(state.h)).attr("y1",0).attr("y2", innerH);
+    vLabel.attr("x", x(state.h)+6).attr("y", y(state.k)-8).text(`Vertex (${state.h.toFixed(2)}, ${state.k.toFixed(2)})`);
+
+    line2.attr("x1", x(-2)).attr("y1", y(gLine(-2))).attr("x2", x(5)).attr("y2", y(gLine(5)));
+    h1.attr("cx", x(second.p1.x)).attr("cy", y(second.p1.y));
+    h2.attr("cx", x(second.p2.x)).attr("cy", y(second.p2.y));
+
+    drawShade();
+    vL.attr("x1", x(state.xL)).attr("x2", x(state.xL)).attr("y1",0).attr("y2", innerH);
+    vR.attr("x1", x(state.xR)).attr("x2", x(state.xR)).attr("y1",0).attr("y2", innerH);
+    updateInfo();
+  }
+
+  let areaMode = 0; // 0: vs y=0, 1: between f and g
+  function drawShade(){
+    const NX = 160, xs = d3.range(state.xL, state.xR+(state.xR-state.xL)/NX, (state.xR-state.xL)/NX);
+    if(areaMode===0){
+      const poly = xs.map(xx=>[x(xx), y(f(xx))]);
+      const baseY = y(0);
+      poly.push([x(state.xR), baseY], [x(state.xL), baseY]);
+      shade.attr("d", d3.line().x(d=>d[0]).y(d=>d[1]).curve(d3.curveLinearClosed)(poly));
+    }else{
+      const top = xs.map(xx=>[x(xx), y(f(xx))]);
+      const bot = xs.slice().reverse().map(xx=>[x(xx), y(gLine(xx))]);
+      const poly = top.concat(bot);
+      shade.attr("d", d3.line().x(d=>d[0]).y(d=>d[1]).curve(d3.curveLinearClosed)(poly));
+    }
+  }
+
+  function areaAnalytic(){
+    const x1 = state.xL, x2 = state.xR;
+    const Af = (state.a/3)*((x2-state.h)**3 - (x1-state.h)**3) + state.k*(x2-x1);
+    if(areaMode===0){
+      return Af; // vs y=0
+    }else{
+      const m = mLine(), b = bLine();
+      const Ag = 0.5*m*(x2*x2 - x1*x1) + b*(x2-x1);
+      return Af - Ag; // f - g
+    }
+  }
+
+  function updateInfo(){
+    const A = areaAnalytic();
+    const modeTxt = areaMode===0 ? "vs y=0" : "between f and g(x)";
+    const eq2 = areaMode===0 ? "" : `, g(x) = ${mLine().toFixed(3)}·x + ${bLine().toFixed(3)}`;
+    info.text(`y = ${state.a.toFixed(3)}·(x − ${state.h.toFixed(3)})² + ${state.k.toFixed(3)}${eq2}   |   Area ${modeTxt} ≈ ${A.toFixed(3)}`);
+  }
+
+  function updateTracer(mx){
+    const xv = clamp(x.invert(mx), x.domain()[0], x.domain()[1]);
+    const yv = f(xv);
+    tracer.attr("cx", x(xv)).attr("cy", y(yv));
+
+    if (chips.tn.classed("on")){
+      const slope = 2*state.a*(xv - state.h);
+      const xA = x.domain()[0], xB = x.domain()[1];
+      const yA = slope*(xA - xv) + yv;
+      const yB = slope*(xB - xv) + yv;
+      tLine.attr("x1", x(xA)).attr("y1", y(yA)).attr("x2", x(xB)).attr("y2", y(yB)).attr("opacity",1);
+      const nSlope = (slope===0) ? Infinity : -1/slope;
+      if(!isFinite(nSlope)){
+        nLine.attr("x1", x(xv)).attr("y1", 0).attr("x2", x(xv)).attr("y2", innerH).attr("opacity",1);
+      }else{
+        const nyA = nSlope*(xA - xv) + yv;
+        const nyB = nSlope*(xB - xv) + yv;
+        nLine.attr("x1", x(xA)).attr("y1", y(nyA)).attr("x2", x(xB)).attr("y2", y(nyB)).attr("opacity",1);
+      }
+    }else{
+      tLine.attr("opacity",0); nLine.attr("opacity",0);
+    }
+  }
+
+  // Interactions
+  c.select(".viz").on("mousemove", (event)=>{
+    if(!tracerLocked) updateTracer(d3.pointer(event, g.node())[0]);
+  }).on("click", ()=>{
+    tracerLocked = !tracerLocked;
+    chips.lock.text(`Lock Tracer: ${tracerLocked ? "ON" : "OFF"}`).classed("on", tracerLocked);
+  }).on("dblclick", ()=>{
+    state.a=0.35; state.h=1.0; state.k=0.5; state.xL=0.6; state.xR=2.2;
+    curvX = state.h + 1.2;
+    second.p1={x:-0.6,y:0.8}; second.p2={x:3.6,y:1.8};
+    tracerLocked=false; chips.lock.text("Lock Tracer: OFF").classed("on", false);
+    draw(); updateTracer(x(state.h));
+  });
+
+  vertex.call(d3.drag().on("drag",(event)=>{
+    const [mx,my]=d3.pointer(event,g.node());
+    state.h = clamp(x.invert(mx), x.domain()[0]+0.1, x.domain()[1]-0.1);
+    state.k = clamp(y.invert(my), y.domain()[0]+0.1, y.domain()[1]-0.1);
+    draw(); updateTracer(x(state.h));
+  }));
+
+  curv.call(d3.drag().on("drag",(event)=>{
+    const [mx,my] = d3.pointer(event,g.node());
+    const ax = clamp(x.invert(mx), x.domain()[0]+0.05, x.domain()[1]-0.05);
+    const ay = clamp(y.invert(my), y.domain()[0]+0.05, y.domain()[1]-0.05);
+    const denom = Math.max(0.02, (ax - state.h)*(ax - state.h));
+    let aNew = (ay - state.k)/denom;
+    if(event.sourceEvent && event.sourceEvent.shiftKey){
+      const s = Math.sign(state.a) || 1; aNew = Math.abs(aNew)*s; // lock sign
+    }
+    state.a = clamp(aNew, -2.5, 2.5);
+    curvX = ax;
+    draw(); updateTracer(x(ax));
+  }));
+
+  vL.call(d3.drag().on("drag",(event)=>{ const [mx]=d3.pointer(event,g.node()); state.xL = clamp(x.invert(mx), x.domain()[0], x.domain()[1]); draw(); }));
+  vR.call(d3.drag().on("drag",(event)=>{ const [mx]=d3.pointer(event,g.node()); state.xR = clamp(x.invert(mx), x.domain()[0], x.domain()[1]); draw(); }));
+
+  function dragH(p){
+    return d3.drag().on("drag", (event)=>{
+      const [mx,my]=d3.pointer(event,g.node());
+      p.x = clamp(x.invert(mx), x.domain()[0], x.domain()[1]);
+      p.y = clamp(y.invert(my), y.domain()[0], y.domain()[1]);
+      draw(); updateTracer(x(state.h));
+    });
+  }
+  h1.call(dragH(second.p1)); h2.call(dragH(second.p2));
+
+  chips.tn.on("click", function(){ d3.select(this).classed("on", !d3.select(this).classed("on")); updateTracer(x(state.h)); });
+  chips.axis.on("click", function(){
+    const on = !d3.select(this).classed("on");
+    d3.select(this).classed("on", on);
+    axis.attr("opacity", on?1:0); vLabel.attr("opacity", on?1:0);
+  });
+  chips.area.on("click", function(){
+    const on = !d3.select(this).classed("on");
+    d3.select(this).classed("on", on);
+    areaMode = on ? 1 : 0;
+    chips.area.text(on ? "Area: f − g(x)" : "Area: y = 0");
+    line2.attr("opacity", on?1:0); h1.attr("opacity", on?1:0); h2.attr("opacity", on?1:0);
+    draw(); updateTracer(x(state.h));
+  });
+
+  draw(); updateTracer(x(state.h));
+
+  pipeline(c, [
+    "Data: quadratic params a,h,k; bounds xL,xR; optional line g(x)=mx+b",
+    "Transform: y=f(x); area vs baseline or between f and g; slope y' for tangent/normal",
+    "Encode: axes, curve, tracer; draggable handles; chips toggle helpers",
+    "Render: shaded region; click=lock tracer; Shift+drag curvature; double-click reset"
+  ]);
+})();
+</script>
+</body>
+</html>
