@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Interactive Charts — Dark Set</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#020617;
+    --panel:#020617;
+    --ink:#e5e7eb;
+    --muted:#9ca3af;
+    --grid:#1f2937;
+    --axis:#4b5563;
+    --purple:#a855f7;
+    --purple-soft:#7c3aed;
+    --teal:#22d3ee;
+    --gold:#facc15;
+    --rose:#fb7185;
+  }
+  html,body{
+    margin:0;padding:0;
+    background:var(--bg);color:var(--ink);
+    font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+  }
+  .wrap{
+    max-width:760px;
+    margin:0 auto;
+    padding:8px 8px 40px;
+    display:grid;
+    gap:10px;
+    grid-template-columns:1fr;
+  }
+  .card{
+    background:radial-gradient(circle at top left,rgba(148,163,253,.16),transparent 55%),
+               radial-gradient(circle at bottom right,rgba(45,212,191,.12),transparent 55%),
+               var(--panel);
+    border-radius:16px;
+    border:1px solid #111827;
+    box-shadow:0 16px 40px rgba(0,0,0,.55);
+    padding:8px 10px 10px;
+  }
+  .title{font-weight:700;margin:2px 2px 4px;font-size:16px;line-height:1.25}
+  .subtitle{margin:-2px 2px 6px;color:var(--muted);font-size:10px}
+  svg{width:100%;height:auto;background:#020617;border-radius:10px}
+  .axis text, text.axis{font-size:8px;fill:#cbd5e1}
+  .legend{font-size:9px;fill:#e5e7eb;cursor:pointer}
+</style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="card">
+      <div class="title">Figure 1 — Vector Space</div>
+      <div class="subtitle">Drag the four endpoints; the parallelogram and dashed diagonals update; hover to replay the animation.</div>
+      <svg id="c1" viewBox="0 0 460 170" aria-label="vector space"></svg>
+    </div>
+
+    <div class="card">
+      <div class="title">Figure 2 — Frequency</div>
+      <div class="subtitle">Click a year to inspect; use the legend to toggle each model family.</div>
+      <svg id="c2" viewBox="0 0 520 160" aria-label="frequency area"></svg>
+    </div>
+
+    <div class="card">
+      <div class="title">Figure 3 — Venn</div>
+      <div class="subtitle">Move mouse to highlight combinations; click to lock/unlock; drag circles to reposition overlaps.</div>
+      <svg id="c3" viewBox="0 0 480 180" aria-label="venn"></svg>
+    </div>
+
+    <div class="card">
+      <div class="title">Figure 4 — Optimization Path</div>
+      <div class="subtitle">Drag the black control points to reshape the path; hover or click to replay the animated trajectory.</div>
+      <svg id="c4" viewBox="0 0 460 170" aria-label="optimisation route"></svg>
+    </div>
+
+    <div class="card">
+      <div class="title">Figure 5 — Function</div>
+      <div class="subtitle">Two probability density curves; click twice to set an interval and show dominant area proportions.</div>
+      <svg id="c5" viewBox="0 0 480 150" aria-label="gaussians"></svg>
+    </div>
+  </div>
+
+<script>
+/* ---------- helpers ---------- */
+function svgEl(tag, attrs={}, children=[]){
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for(const k in attrs){ el.setAttribute(k, attrs[k]); }
+  for(const c of children){ el.appendChild(c); }
+  return el;
+}
+function drawGrid(g, x, y, w, h, xStep, yStep){
+  const grid = svgEl("g", {stroke:"var(--grid)", "stroke-width":"1"});
+  for(let xx=x; xx<=x+w+0.1; xx+=xStep){
+    grid.appendChild(svgEl("line",{x1:xx,y1:y,x2:xx,y2:y+h}));
+  }
+  for(let yy=y; yy<=y+h+0.1; yy+=yStep){
+    grid.appendChild(svgEl("line",{x1:x,y1:yy,x2:x+w,y2:yy}));
+  }
+  g.appendChild(grid);
+}
+function drawAxes(g, x, y, w, h, xTicks, yTicks, xDomain, yDomain){
+  const ga = svgEl("g",{"class":"axis"}); g.appendChild(ga);
+  ga.appendChild(svgEl("line",{x1:x,y1:y+h,x2:x+w,y2:y+h,stroke:"var(--axis)"}));
+  ga.appendChild(svgEl("line",{x1:x,y1:y,x2:x,y2:y+h,stroke:"var(--axis)"}));
+  const x0=xDomain[0], x1=xDomain[1], y0=yDomain[0], y1=yDomain[1];
+
+  for(let i=0;i<=xTicks;i++){
+    const t=i/xTicks, xx=x+t*w;
+    ga.appendChild(svgEl("line",{x1:xx,y1:y+h,x2:xx,y2:y+h+3,stroke:"var(--axis)"}));
+    const val = x0+t*(x1-x0);
+    const txt = svgEl("text",{x:xx,y:y+h+10,"text-anchor":"middle"},[]);
+    txt.textContent = (Math.abs(val)<1e-6?0:val).toFixed(0);
+    ga.appendChild(txt);
+  }
+  for(let i=0;i<=yTicks;i++){
+    const t=i/yTicks, yy=y+(1-t)*h;
+    ga.appendChild(svgEl("line",{x1:x-3,y1:yy,x2:x,y2:yy,stroke:"var(--axis)"}));
+    const val = y0+t*(y1-y0);
+    const txt = svgEl("text",{x:x-5,y:yy+3,"text-anchor":"end"},[]);
+    txt.textContent = val.toFixed(0);
+    ga.appendChild(txt);
+  }
+}
+
+/* ---------- Figure 1: Vector space ---------- */
+(function(){
+  const svg = document.getElementById("c1");
+  const W=460,H=170, m={t:18,r:18,b:18,l:30};
+  const w=W-m.l-m.r, h=H-m.t-m.b;
+  const g = svgEl("g",{transform:"translate("+m.l+","+m.t+")"}); svg.appendChild(g);
+
+  const cols=9, rows=4;
+  const Xgrid = v => v/cols * w;
+  const Ygrid = v => (1 - v/rows) * h;
+
+  drawGrid(g,0,0,w,h,w/cols,h/rows);
+
+  const defs = svgEl("defs");
+  function makeMarker(id,color){
+    const mk = svgEl("marker",{id:id,viewBox:"0 0 10 10",refX:"9",refY:"5",
+                               markerWidth:"5",markerHeight:"5",orient:"auto"});
+    mk.appendChild(svgEl("path",{d:"M0,0 L10,5 L0,10 Z",fill:color}));
+    return mk;
+  }
+  defs.appendChild(makeMarker("vs-solid","#e5e7eb"));
+  defs.appendChild(makeMarker("vs-blue","#22d3ee"));
+  defs.appendChild(makeMarker("vs-teal","#a855f7"));
+  svg.appendChild(defs);
+
+  const P = {
+    e2b:{x:1.5,y:0.9},
+    e1b:{x:4.8,y:0.9},
+    e2a:{x:3.9,y:2.6},
+    e1a:{x:6.6,y:2.6}
+  };
+
+  function pathFrom(list){
+    return list.map((p,i)=>(i?"L":"M")+Xgrid(p.x)+" "+Ygrid(p.y)).join(" ");
+  }
+
+  const para = svgEl("path",{
+    fill:"#111827",
+    "fill-opacity":"0.42",
+    stroke:"#e5e7eb",
+    "stroke-width":"1.2"
+  });
+  const solid1 = svgEl("path",{
+    fill:"none",stroke:"#e5e7eb","stroke-width":"1.4",
+    "marker-end":"url(#vs-solid)"
+  });
+  const solid2 = svgEl("path",{
+    fill:"none",stroke:"#e5e7eb","stroke-width":"1.4",
+    "marker-end":"url(#vs-solid)"
+  });
+  const dashedG = svgEl("g",{"stroke-width":"1.6",fill:"none"});
+  const dash1 = svgEl("path",{
+    stroke:"#22d3ee","stroke-dasharray":"6 6",
+    "marker-end":"url(#vs-blue)"
+  });
+  const dash2 = svgEl("path",{
+    stroke:"#a855f7","stroke-dasharray":"6 6",
+    "marker-end":"url(#vs-teal)"
+  });
+  dashedG.appendChild(dash1); dashedG.appendChild(dash2);
+
+  g.appendChild(para);
+  g.appendChild(solid1);
+  g.appendChild(solid2);
+  g.appendChild(dashedG);
+
+  const pointDefs = [
+    {key:"e2b",sup:"β",sub:"2",align:"left"},
+    {key:"e1b",sup:"β",sub:"1",align:"right"},
+    {key:"e2a",sup:"α",sub:"2",align:"left"},
+    {key:"e1a",sup:"α",sub:"1",align:"right"}
+  ];
+  const pointNodes = {};
+  const labelNodes = {};
+
+  pointDefs.forEach(d=>{
+    const c = svgEl("circle",{
+      r:4.2,fill:"#e5e7eb",stroke:"#020617","stroke-width":"1",
+      cx:Xgrid(P[d.key].x),cy:Ygrid(P[d.key].y)
+    });
+    c.style.cursor="grab";
+    g.appendChild(c);
+    pointNodes[d.key]=c;
+
+    const base = svgEl("text",{
+      x:Xgrid(P[d.key].x)+(d.align==="left"?6:-6),
+      y:Ygrid(P[d.key].y)+(d.key.indexOf("2")!==-1?8:-6),
+      "text-anchor":(d.align==="left"?"start":"end"),
+      fill:"#e5e7eb","font-size":"14"
+    });
+    const t1 = svgEl("tspan",{}); t1.textContent="e";
+    const t2 = svgEl("tspan",{"baseline-shift":"super","font-size":"10"}); t2.textContent=d.sup;
+    const t3 = svgEl("tspan",{"baseline-shift":"sub","font-size":"10"}); t3.textContent=d.sub;
+    base.appendChild(t1);base.appendChild(t2);base.appendChild(t3);
+    g.appendChild(base);
+    labelNodes[d.key]=base;
+  });
+
+  function redraw(){
+    para.setAttribute("d",pathFrom([P.e2b,P.e2a,P.e1a,P.e1b,P.e2b]));
+    solid1.setAttribute("d",pathFrom([P.e2b,P.e2a]));
+    solid2.setAttribute("d",pathFrom([P.e1b,P.e1a]));
+    dash1.setAttribute("d",pathFrom([P.e2b,P.e1a]));
+    dash2.setAttribute("d",pathFrom([P.e2a,P.e1b]));
+    pointDefs.forEach(d=>{
+      const p=P[d.key];
+      pointNodes[d.key].setAttribute("cx",Xgrid(p.x));
+      pointNodes[d.key].setAttribute("cy",Ygrid(p.y));
+      labelNodes[d.key].setAttribute("x",Xgrid(p.x)+(d.align==="left"?6:-6));
+      labelNodes[d.key].setAttribute("y",Ygrid(p.y)+(d.key.indexOf("2")!==-1?8:-6));
+    });
+  }
+  redraw();
+
+  function animateDashed(){
+    [dash1,dash2].forEach(path=>{
+      const len = path.getTotalLength();
+      path.setAttribute("stroke-dasharray",len+" "+len);
+      path.setAttribute("stroke-dashoffset",len);
+      path.animate(
+        [{strokeDashoffset:len},{strokeDashoffset:0}],
+        {duration:900,easing:"cubic-bezier(.2,.8,.2,1)",fill:"forwards"}
+      );
+    });
+  }
+  animateDashed();
+  svg.addEventListener("mouseenter",animateDashed);
+
+  let dragKey=null;
+  svg.addEventListener("pointerdown",e=>{
+    const target=e.target;
+    for(const d of pointDefs){
+      if(target===pointNodes[d.key]){
+        dragKey=d.key;
+        pointNodes[d.key].style.cursor="grabbing";
+        svg.setPointerCapture(e.pointerId);
+      }
+    }
+  });
+  svg.addEventListener("pointermove",e=>{
+    if(!dragKey) return;
+    const pt = svg.createSVGPoint();
+    pt.x=e.clientX;pt.y=e.clientY;
+    const local=pt.matrixTransform(svg.getScreenCTM().inverse());
+    const lx = local.x-m.l;
+    const ly = local.y-m.t;
+    const gx = Math.max(0,Math.min(w,lx))/w*cols;
+    const gy = (1-Math.max(0,Math.min(h,ly))/h)*rows;
+    P[dragKey].x=gx;P[dragKey].y=gy;
+    redraw();
+  });
+  svg.addEventListener("pointerup",e=>{
+    if(dragKey){
+      pointNodes[dragKey].style.cursor="grab";
+      dragKey=null;
+      svg.releasePointerCapture(e.pointerId);
+      animateDashed();
+    }
+  });
+  svg.addEventListener("pointerleave",()=>{dragKey=null;});
+})();
+
+/* ---------- Figure 2: Frequency area ---------- */
+(function(){
+  const svg=document.getElementById("c2");
+  const W=520,H=160,m={t:14,r:12,b:24,l:36};
+  const w=W-m.l-m.r,h=H-m.t-m.b;
+  const g=svgEl("g",{transform:"translate("+m.l+","+m.t+")"});svg.appendChild(g);
+  drawGrid(g,0,0,w,h,w/10,h/5);
+
+  const years=[];for(let y=1980;y<=2023;y++)years.push(y);
+  function bump(start,end,maxVal){
+    return years.map(y=>{
+      if(y<start||y>end) return 0;
+      const t=(y-start)/(end-start);
+      return maxVal*Math.max(0,Math.sin(Math.PI*t));
+    });
+  }
+  const setArr=bump(1992,2006,3);
+  const seqArr=bump(1985,2005,2);
+  const vecArr=bump(1998,2015,4);
+  const endArr=bump(2008,2020,9).map(v=>v*(0.7+0.3*Math.random()));
+
+  const series=[
+    {label:"Set model",color:"var(--teal)",values:setArr},
+    {label:"Sequence model",color:"var(--purple-soft)",values:seqArr},
+    {label:"Vector model",color:"var(--gold)",values:vecArr},
+    {label:"End-to-end",color:"var(--purple)",values:endArr}
+  ];
+  series.forEach(s=>s.on=true);
+
+  const x0=1980,x1=2023;
+  const maxY=Math.max(...series.flatMap(s=>s.values))+1;
+  const X=v=>(v-x0)/(x1-x0)*w;
+  const Y=v=>(1-v/maxY)*h;
+
+  drawAxes(g,0,0,w,h,8,4,[x0,x1],[0,maxY]);
+
+  const areas=series.map(s=>{
+    const p=svgEl("path",{fill:s.color,stroke:s.color,"stroke-width":"1",opacity:"0.5"});
+    g.appendChild(p);return {s,path:p};
+  });
+
+  function drawAreas(){
+    areas.forEach(({s,path})=>{
+      if(!s.on){ path.setAttribute("d",""); return; }
+      let d="";
+      s.values.forEach((v,i)=>{
+        const xx=X(years[i]),yy=Y(v);
+        d+=(i?"L":"M")+xx+" "+yy;
+      });
+      d+=" L "+X(x1)+" "+Y(0)+" L "+X(x0)+" "+Y(0)+" Z";
+      path.setAttribute("d",d);
+    });
+  }
+  drawAreas();
+
+  const lg=svgEl("g",{});svg.appendChild(lg);
+  series.forEach((s,i)=>{
+    const gx=86+i*110,gy=16;
+    const rect=svgEl("rect",{x:gx-12,y:gy-7,width:9,height:9,fill:s.color,opacity:1,rx:2});
+    const txt=svgEl("text",{x:gx,y:gy,"alignment-baseline":"middle","class":"legend"},[]);
+    txt.textContent=s.label;
+    const group=svgEl("g",{});group.appendChild(rect);group.appendChild(txt);lg.appendChild(group);
+    group.addEventListener("click",()=>{
+      s.on=!s.on;
+      rect.setAttribute("opacity",s.on?1:0.25);
+      txt.setAttribute("opacity",s.on?1:0.35);
+      drawAreas();
+    });
+  });
+
+  const marker=svgEl("line",{x1:0,y1:m.t,x2:0,y2:H-m.b,stroke:"var(--rose)","stroke-width":"1.1",opacity:"0"});
+  svg.appendChild(marker);
+  const pips=svgEl("g",{});svg.appendChild(pips);
+
+  svg.addEventListener("click",e=>{
+    const pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    const local=pt.matrixTransform(svg.getScreenCTM().inverse());
+    let x=local.x-m.l;
+    if(x<0||x>w) return;
+    const year=Math.round(x/w*(x1-x0)+x0);
+    const xx=m.l+X(year);
+    marker.setAttribute("x1",xx);marker.setAttribute("x2",xx);marker.setAttribute("opacity","1");
+    pips.innerHTML="";
+    series.forEach(s=>{
+      if(!s.on) return;
+      const idx=years.indexOf(year);
+      if(idx<0) return;
+      const v=s.values[idx];
+      const cy=m.t+Y(v);
+      const c=svgEl("circle",{cx:xx,cy:cy,r:0,fill:s.color,stroke:"#00000055","stroke-width":"1"});
+      const t=svgEl("text",{x:xx+4,y:cy-4,"font-size":"9",fill:s.color},[]);
+      t.textContent=v.toFixed(1);
+      pips.appendChild(c);pips.appendChild(t);
+      c.animate([{r:0},{r:3.8}],{duration:160,fill:"forwards"});
+    });
+  });
+})();
+
+/* ---------- Figure 3: Venn (merged like sample) ---------- */
+(function(){
+  const svg=document.getElementById("c3");
+  const W=480,H=180,m={t:12,r:12,b:16,l:12};
+  const w=W-m.l-m.r,h=H-m.t-m.b;
+  const g=svgEl("g",{transform:"translate("+m.l+","+m.t+")"});svg.appendChild(g);
+  drawGrid(g,0,0,w,h,w/12,h/8);
+
+  // 三个圆靠得更近：左往右移、右往左移，形成明显三重交叠
+  const R  = Math.min(w,h)*0.33;
+  const cx1 = w*0.40, cy1 = h*0.40; // set1 (left, moved right)
+  const cx2 = w*0.60, cy2 = h*0.40; // set2 (right, moved left)
+  const cx3 = w*0.50, cy3 = h*0.78; // set3 (bottom)
+
+  const vennG = svgEl("g",{}); g.appendChild(vennG);
+
+  const circles = [
+    {name:"set1", x:cx1, y:cy1, r:R, fill:"rgba(96,165,250,.35)",  stroke:"#93c5fd"}, // 蓝
+    {name:"set2", x:cx2, y:cy2, r:R, fill:"rgba(74,222,128,.35)",  stroke:"#86efac"}, // 绿
+    {name:"set3", x:cx3, y:cy3, r:R, fill:"rgba(250,204,21,.35)",  stroke:"#facc15"}  // 黄
+  ];
+
+  const cs = circles.map(c=>{
+    const el = svgEl("circle",{
+      cx:c.x,cy:c.y,r:c.r,
+      fill:c.fill,stroke:c.stroke,"stroke-width":"1"
+    });
+    el.style.cursor="pointer";
+    vennG.appendChild(el);
+    return {c,el,on:false};
+  });
+
+  function resetCircles(){
+    cs.forEach(o=>{
+      o.on=false;
+      o.el.setAttribute("r",o.c.r);
+      o.el.setAttribute("stroke-width","1");
+      o.el.setAttribute("opacity","0.96");
+    });
+  }
+  cs.forEach(o=>{
+    o.el.addEventListener("click",()=>{
+      const was=o.on;resetCircles();
+      if(!was){
+        o.on=true;
+        o.el.animate([{r:o.c.r},{r:o.c.r*1.06}],{duration:220,fill:"forwards"});
+        o.el.setAttribute("stroke-width","1.6");
+        o.el.setAttribute("opacity","1");
+      }
+    });
+  });
+
+  function regionLabel(x,y,text){
+    const t = svgEl("text",{
+      x:x,y:y,"text-anchor":"middle",
+      "font-size":"10","font-weight":"600",
+      fill:"#0f172a"
+    },[]);
+    t.textContent = text;
+    vennG.appendChild(t);
+  }
+
+  // set labels
+  vennG.appendChild(
+    svgEl("text",{
+      x:cx1-R*0.95,y:cy1,
+      "font-size":"11","font-weight":"600",
+      fill:"#e5e7eb","text-anchor":"start"
+    },[])
+  ).textContent="set1";
+
+  vennG.appendChild(
+    svgEl("text",{
+      x:cx2+R*0.95,y:cy2,
+      "font-size":"11","font-weight":"600",
+      fill:"#e5e7eb","text-anchor":"end"
+    },[])
+  ).textContent="set2";
+
+  vennG.appendChild(
+    svgEl("text",{
+      x:cx3,y:cy3+R*0.95,
+      "font-size":"11","font-weight":"600",
+      fill:"#e5e7eb","text-anchor":"middle"
+    },[])
+  ).textContent="set3";
+
+  // 区域数字（示例风格：中间一块、三边三块、三条“边缘”）
+  regionLabel(cx1-R*0.30, cy1+R*0.05, "371");          // left only
+  regionLabel(cx2+R*0.30, cy2+R*0.05, "91");           // right only
+  regionLabel(cx3,         cy3+R*0.32, "514");         // bottom only
+  regionLabel((cx1+cx2)/2, cy1-R*0.12, "163");         // set1∩set2
+  regionLabel(cx1-R*0.05,  cy3-R*0.20, "174");         // set1∩set3
+  regionLabel(cx2+R*0.05,  cy3-R*0.20, "13");          // set2∩set3
+  regionLabel(cx3,         (cy1+cy3)/2, "38");         // triple overlap
+})();
+
+
+/* ---------- Figure 4: Optimization path ---------- */
+(function(){
+  const svg=document.getElementById("c4");
+  const W=460,H=170,m={t:10,r:16,b:14,l:26};
+  const w=W-m.l-m.r,h=H-m.t-m.b;
+  const g=svgEl("g",{transform:"translate("+m.l+","+m.t+")"});svg.appendChild(g);
+
+  const size=Math.min(w,h)*0.96;
+  const offX=(w-size)/2,offY=(h-size)/2;
+  const X=v=>offX+v*size;
+  const Y=v=>offY+(1-v)*size;
+
+  drawGrid(g,offX,offY,size,size,size/10,size/10);
+
+  const defs=svgEl("defs");
+  const arrow=svgEl("marker",{id:"opt-arrow",viewBox:"0 0 10 10",refX:"9",refY:"5",
+                               markerWidth:"6",markerHeight:"6",orient:"auto"});
+  arrow.appendChild(svgEl("path",{d:"M0,0 L10,5 L0,10 Z",fill:"#e5e7eb"}));
+  defs.appendChild(arrow);svg.appendChild(defs);
+
+  const pts=[
+    {x:0.10,y:0.90},
+    {x:0.12,y:0.78},
+    {x:0.14,y:0.64},
+    {x:0.16,y:0.50},
+    {x:0.20,y:0.42},
+    {x:0.26,y:0.38},
+    {x:0.34,y:0.40},
+    {x:0.42,y:0.44},
+    {x:0.50,y:0.50},
+    {x:0.60,y:0.54},
+    {x:0.70,y:0.52},
+    {x:0.80,y:0.46},
+    {x:0.88,y:0.44}
+  ];
+
+  function pathOf(list){
+    return list.map((p,i)=>(i?"L":"M")+X(p.x)+" "+Y(p.y)).join(" ");
+  }
+
+  const band=svgEl("path",{
+    fill:"rgba(56,189,248,.20)",
+    stroke:"#22d3ee",
+    "stroke-width":"1.4"
+  });
+  g.appendChild(band);
+
+  const routeGroup=svgEl("g",{stroke:"#e5e7eb","stroke-width":"1.8"});g.appendChild(routeGroup);
+  const segEls=[];
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1];
+    const ln=svgEl("line",{
+      x1:X(a.x),y1:Y(a.y),x2:X(b.x),y2:Y(b.y),
+      "marker-end":"url(#opt-arrow)"
+    });
+    routeGroup.appendChild(ln);segEls.push(ln);
+  }
+
+  const handlesG=svgEl("g",{});g.appendChild(handlesG);
+  const handles=pts.map(p=>{
+    const c=svgEl("circle",{cx:X(p.x),cy:Y(p.y),r:3.4,fill:"#020617",stroke:"#e5e7eb","stroke-width":"1"});
+    c.style.cursor="pointer";handlesG.appendChild(c);return c;
+  });
+
+  function redraw(){
+    const upper=pts.map(p=>({x:p.x,y:p.y+0.06}));
+    const lower=pts.slice().reverse().map(p=>({x:p.x,y:p.y-0.06}));
+    band.setAttribute("d", pathOf(upper)+" "+pathOf(lower).replace("M","L")+" Z");
+
+    for(let i=0;i<pts.length-1;i++){
+      const a=pts[i],b=pts[i+1];
+      segEls[i].setAttribute("x1",X(a.x));
+      segEls[i].setAttribute("y1",Y(a.y));
+      segEls[i].setAttribute("x2",X(b.x));
+      segEls[i].setAttribute("y2",Y(b.y));
+    }
+    pts.forEach((p,i)=>{
+      handles[i].setAttribute("cx",X(p.x));
+      handles[i].setAttribute("cy",Y(p.y));
+    });
+  }
+
+  function replay(){
+    band.animate(
+      [{fillOpacity:0.20},{fillOpacity:0.38},{fillOpacity:0.20}],
+      {duration:800,fill:"forwards"}
+    );
+    segEls.forEach((ln,i)=>{
+      const x1=parseFloat(ln.getAttribute("x1"));
+      const y1=parseFloat(ln.getAttribute("y1"));
+      const x2=parseFloat(ln.getAttribute("x2"));
+      const y2=parseFloat(ln.getAttribute("y2"));
+      const length=Math.hypot(x2-x1,y2-y1);
+      ln.setAttribute("stroke-dasharray",length+" "+length);
+      ln.setAttribute("stroke-dashoffset",length);
+      ln.animate(
+        [{strokeDashoffset:length},{strokeDashoffset:0}],
+        {duration:380,delay:i*80,fill:"forwards"}
+      );
+    });
+  }
+
+  redraw();
+  replay();
+  svg.addEventListener("mouseenter",replay);
+  svg.addEventListener("click",replay);
+
+  let dragIndex=null;
+  svg.addEventListener("pointerdown",e=>{
+    const target=e.target;
+    for(let i=0;i<handles.length;i++){
+      if(target===handles[i]){
+        dragIndex=i;
+        svg.setPointerCapture(e.pointerId);
+      }
+    }
+  });
+  svg.addEventListener("pointermove",e=>{
+    if(dragIndex===null) return;
+    const pt=svg.createSVGPoint();
+    pt.x=e.clientX;pt.y=e.clientY;
+    const local=pt.matrixTransform(svg.getScreenCTM().inverse());
+    const lx=local.x-m.l-offX;
+    const ly=local.y-m.t-offY;
+    let nx=lx/size, ny=1-ly/size;
+    nx=Math.max(0,Math.min(1,nx));
+    ny=Math.max(0,Math.min(1,ny));
+    pts[dragIndex].x=nx;pts[dragIndex].y=ny;
+    redraw();
+  });
+  svg.addEventListener("pointerup",e=>{
+    if(dragIndex!==null){
+      dragIndex=null;
+      svg.releasePointerCapture(e.pointerId);
+      replay();
+    }
+  });
+  svg.addEventListener("pointerleave",()=>{dragIndex=null;});
+})();
+
+/* ---------- Figure 5: Probability density ---------- */
+(function(){
+  const svg=document.getElementById("c5");
+  const W=480,H=150,m={t:12,r:12,b:24,l:38};
+  const w=W-m.l-m.r,h=H-m.t-m.b;
+  const g=svgEl("g",{transform:"translate("+m.l+","+m.t+")"});svg.appendChild(g);
+
+  drawGrid(g,0,0,w,h,w/7,h/5);
+  drawAxes(g,0,0,w,h,7,5,[-2,5],[0,50]);
+
+  const X=v=>(v+2)/(5+2)*w;
+  const Y=v=>(1-v/50)*h;
+
+  function normal(mu,sigma){
+    const c=1/(sigma*Math.sqrt(2*Math.PI));
+    return function(x){
+      const z=(x-mu)/sigma;
+      return c*Math.exp(-0.5*z*z)*100;
+    };
+  }
+  const f0=normal(0.2,0.9);
+  const f1=normal(2.0,0.8);
+
+  const xs=[];for(let x=-2;x<=5;x+=0.02) xs.push(x);
+  function linePath(f){
+    let d="";xs.forEach((v,i)=>{
+      const yy=f(v);
+      d+=(i?"L":"M")+X(v)+" "+Y(yy);
+    });
+    return d;
+  }
+
+  const p0=svgEl("path",{d:linePath(f0),fill:"none",stroke:"var(--teal)","stroke-width":"1.6"});
+  const p1=svgEl("path",{d:linePath(f1),fill:"none",stroke:"var(--purple-soft)","stroke-width":"1.6"});
+  g.appendChild(p0);g.appendChild(p1);
+
+  const area0=svgEl("path",{fill:"rgba(45,212,191,.25)"});
+  const area1=svgEl("path",{fill:"rgba(168,85,247,.30)"});
+  g.appendChild(area0);g.appendChild(area1);
+
+  const vL=svgEl("line",{"stroke":"var(--rose)","stroke-dasharray":"6 4",display:"none"});
+  const vR=svgEl("line",{"stroke":"var(--rose)","stroke-dasharray":"6 4",display:"none"});
+  g.appendChild(vL);g.appendChild(vR);
+
+  const chip=svgEl("g",{opacity:"0",transform:"translate("+X(3)+","+Y(46)+")"});
+  chip.appendChild(svgEl("rect",{width:"170",height:"16",rx:"7",fill:"#0f172a"}));
+  const chipText=svgEl("text",{x:"8",y:"12",fill:"#e5e7eb","font-size":"8","font-weight":"600"},[]);
+  chipText.textContent="area: — / —";
+  chip.appendChild(chipText);g.appendChild(chip);
+
+  let left=null,right=null;
+
+  function areaPath(xSubset,f){
+    if(!xSubset.length) return "";
+    let d="";
+    xSubset.forEach((v,i)=>{
+      d+=(i?"L":"M")+X(v)+" "+Y(f(v));
+    });
+    d+=" L "+X(xSubset[xSubset.length-1])+" "+Y(0)+" L "+X(xSubset[0])+" "+Y(0)+" Z";
+    return d;
+  }
+
+  function updateShade(){
+    if(left===null||right===null) return;
+    const lo=Math.min(left,right),hi=Math.max(left,right);
+    const sub=xs.filter(v=>v>=lo&&v<=hi);
+    const dom0=sub.filter(v=>f0(v)>=f1(v));
+    const dom1=sub.filter(v=>f1(v)>f0(v));
+    area0.setAttribute("d",areaPath(dom0,f0));
+    area1.setAttribute("d",areaPath(dom1,f1));
+
+    vL.setAttribute("x1",X(lo));vL.setAttribute("x2",X(lo));
+    vL.setAttribute("y1",0);vL.setAttribute("y2",h);vL.removeAttribute("display");
+    vR.setAttribute("x1",X(hi));vR.setAttribute("x2",X(hi));
+    vR.setAttribute("y1",0);vR.setAttribute("y2",h);vR.removeAttribute("display");
+
+    const dx=xs[1]-xs[0];
+    let a0=0,a1=0;
+    sub.forEach(v=>{
+      if(f0(v)>=f1(v)) a0+=f0(v)*dx;
+      else a1+=f1(v)*dx;
+    });
+    const total=a0+a1||1;
+    chipText.textContent="area: teal "+(a0/total*100).toFixed(0)+"% · purple "+(a1/total*100).toFixed(0)+"%";
+    chip.setAttribute("opacity","1");
+  }
+
+  svg.addEventListener("click",e=>{
+    const pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    const local=pt.matrixTransform(svg.getScreenCTM().inverse());
+    const xx=local.x-m.l;
+    if(xx<0||xx>w) return;
+    const xv=xx/w*(5+2)-2;
+    if(left===null){ left=xv; right=null; }
+    else if(right===null){ right=xv; }
+    else{
+      left=xv; right=null;
+      area0.setAttribute("d","");area1.setAttribute("d","");
+      chip.setAttribute("opacity","0");
+      vL.setAttribute("display","none");vR.setAttribute("display","none");
+    }
+    updateShade();
+  });
+})();
+</script>
+</body>
+</html>
